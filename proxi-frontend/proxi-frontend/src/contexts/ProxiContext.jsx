@@ -1,12 +1,11 @@
 /**
- * Proxi Context - Global State Management
+ * Proxi Context - Global State Management with Chatbot Integration
  * 
- * Provides policy status, infrastructure state, and agent interaction
- * across the entire application.
+ * Polls the chatbot API to retrieve responses when processing is complete
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { policyAPI, infrastructureAPI, toolsAPI } from '../services/api';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { policyAPI, infrastructureAPI, toolsAPI, chatAPI } from '../services/api';
 
 const ProxiContext = createContext(null);
 
@@ -28,10 +27,14 @@ export const ProxiProvider = ({ children }) => {
   // Agent State
   const [agentMessages, setAgentMessages] = useState([]);
   const [isAgentThinking, setIsAgentThinking] = useState(false);
+  const [sessionId] = useState('default'); // Session ID for chat
 
   // Loading and Error States
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Polling control
+  const pollingIntervalRef = useRef(null);
 
   /**
    * Load policy status from backend
@@ -76,6 +79,64 @@ export const ProxiProvider = ({ children }) => {
   }, []);
 
   /**
+   * Load chatbot messages from backend
+   */
+  const loadChatMessages = useCallback(async () => {
+    try {
+      const data = await chatAPI.getMessages(sessionId);
+      
+      // Convert backend format to frontend format
+      const formattedMessages = data.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: new Date(msg.timestamp).getTime(),
+        toolUsed: msg.metadata?.tool_used,
+        blocked: msg.metadata?.blocked || false,
+        error: msg.metadata?.error || false,
+      }));
+      
+      setAgentMessages(formattedMessages);
+      setIsAgentThinking(data.is_processing);
+      
+      return data.is_processing;
+    } catch (err) {
+      console.error('Failed to load chat messages:', err);
+      return false;
+    }
+  }, [sessionId]);
+
+  /**
+   * Start polling for chat updates
+   */
+  const startPolling = useCallback(() => {
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    // Poll every 1 second while processing
+    pollingIntervalRef.current = setInterval(async () => {
+      const isProcessing = await loadChatMessages();
+      
+      // Stop polling if not processing
+      if (!isProcessing && pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    }, 1000);
+  }, [loadChatMessages]);
+
+  /**
+   * Stop polling
+   */
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
+  /**
    * Initialize app - load all data
    */
   const initialize = useCallback(async () => {
@@ -87,13 +148,14 @@ export const ProxiProvider = ({ children }) => {
         loadPolicyStatus(),
         loadInfrastructureStatus(),
         loadToolCatalog(),
+        loadChatMessages(),
       ]);
     } catch (err) {
       setError('Failed to initialize application');
     } finally {
       setLoading(false);
     }
-  }, [loadPolicyStatus, loadInfrastructureStatus, loadToolCatalog]);
+  }, [loadPolicyStatus, loadInfrastructureStatus, loadToolCatalog, loadChatMessages]);
 
   /**
    * Change operational mode
@@ -102,14 +164,6 @@ export const ProxiProvider = ({ children }) => {
     try {
       await policyAPI.setMode(mode);
       await loadPolicyStatus();
-      
-      // Add system message
-      setAgentMessages(prev => [...prev, {
-        role: 'system',
-        content: `Operational mode changed to ${mode}`,
-        timestamp: Date.now(),
-      }]);
-      
       return true;
     } catch (err) {
       console.error('Failed to change mode:', err);
@@ -124,10 +178,8 @@ export const ProxiProvider = ({ children }) => {
   const executeTool = useCallback(async (toolName, args = {}) => {
     try {
       const result = await toolsAPI.execute(toolName, args);
-      
-      // Refresh infrastructure status after tool execution
+      // Refresh infrastructure after tool execution
       await loadInfrastructureStatus();
-      
       return result;
     } catch (err) {
       console.error('Failed to execute tool:', err);
@@ -142,52 +194,58 @@ export const ProxiProvider = ({ children }) => {
     try {
       await infrastructureAPI.simulateIncident(service, status);
       await loadInfrastructureStatus();
-      
-      setAgentMessages(prev => [...prev, {
-        role: 'system',
-        content: `Simulated incident: ${service} is now ${status}`,
-        timestamp: Date.now(),
-      }]);
     } catch (err) {
       console.error('Failed to simulate incident:', err);
     }
   }, [loadInfrastructureStatus]);
 
   /**
-   * Send message to agent (simulated for now)
+   * Send message to chatbot
    */
   const sendAgentMessage = useCallback(async (message) => {
-    // Add user message
-    setAgentMessages(prev => [...prev, {
-      role: 'user',
-      content: message,
-      timestamp: Date.now(),
-    }]);
-
-    setIsAgentThinking(true);
-
-    // Simulate agent thinking (in real implementation, this would call agent API)
-    setTimeout(() => {
+    try {
+      // Send message to backend
+      await chatAPI.sendMessage(message, sessionId);
+      
+      // Immediately load messages (will include user message and "thinking" status)
+      await loadChatMessages();
+      
+      // Start polling for updates
+      startPolling();
+      
+    } catch (err) {
+      console.error('Failed to send agent message:', err);
       setAgentMessages(prev => [...prev, {
         role: 'agent',
-        content: 'I understand your request. Let me analyze the current infrastructure state and policy constraints...',
+        content: `Error: ${err.message}`,
         timestamp: Date.now(),
+        error: true,
       }]);
-      setIsAgentThinking(false);
-    }, 1500);
-  }, []);
+    }
+  }, [sessionId, loadChatMessages, startPolling]);
 
   /**
    * Clear agent conversation
    */
-  const clearAgentMessages = useCallback(() => {
-    setAgentMessages([]);
-  }, []);
+  const clearAgentMessages = useCallback(async () => {
+    try {
+      await chatAPI.clearMessages(sessionId);
+      setAgentMessages([]);
+      stopPolling();
+    } catch (err) {
+      console.error('Failed to clear messages:', err);
+    }
+  }, [sessionId, stopPolling]);
 
   // Initialize on mount
   useEffect(() => {
     initialize();
-  }, [initialize]);
+    
+    // Cleanup polling on unmount
+    return () => {
+      stopPolling();
+    };
+  }, [initialize, stopPolling]);
 
   // Auto-refresh infrastructure status every 10 seconds
   useEffect(() => {

@@ -1,8 +1,7 @@
 /**
  * API Service for Proxi Backend Communication
  * 
- * This service handles all HTTP requests to the FastAPI backend.
- * It uses axios with a base URL configuration for easy integration.
+ * Includes chatbot API for sending messages and retrieving responses
  */
 
 import axios from 'axios';
@@ -97,14 +96,34 @@ export const infrastructureAPI = {
 };
 
 /**
- * Agent API (for future agent interaction)
+ * Chatbot API - NEW: Communication with AI chatbot
  */
-export const agentAPI = {
-  // Send a task to the agent
-  executeTask: async (task) => {
-    // This would be implemented when backend supports direct agent API
-    // For now, we'll use tool execution
-    return { task, status: 'pending' };
+export const chatAPI = {
+  // Send a message to the chatbot
+  sendMessage: async (message, sessionId = 'default') => {
+    const response = await api.post('/chat/send', {
+      message: message,
+      session_id: sessionId,
+    });
+    return response.data;
+  },
+
+  // Get all messages in a conversation
+  getMessages: async (sessionId = 'default') => {
+    const response = await api.get(`/chat/messages/${sessionId}`);
+    return response.data;
+  },
+
+  // Clear conversation
+  clearMessages: async (sessionId = 'default') => {
+    const response = await api.delete(`/chat/messages/${sessionId}`);
+    return response.data;
+  },
+
+  // Check if chatbot is processing
+  getStatus: async (sessionId = 'default') => {
+    const response = await api.get(`/chat/status/${sessionId}`);
+    return response.data;
   },
 };
 
