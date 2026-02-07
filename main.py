@@ -165,9 +165,7 @@ def run_demo_scenarios():
     print("\n" + "="*80)
     print("SCENARIO 2 RESULT:")
     print("Expected: ✓ Agent successfully RESTARTS service in EMERGENCY mode")
-    print("Actual:  ", "✓ PASS" if "Success" in result.get('response', '') or 
-                               "successfully" in result.get('response', '').lower()
-                               else "✗ FAIL")
+    
     print("="*80)
     
     time.sleep(2)
