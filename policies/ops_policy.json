@@ -1,11 +1,12 @@
 {
-  "policy_name": "Cloud Operations Security Policy",
-  "version": "1.0",
-  "description": "Context-aware policy that restricts agent actions based on operational mode",
+  "policy_name": "Unified Cloud Operations Policy",
+  "version": "3.0",
+  "description": "Comprehensive policy with SCALPEL, SHADOW, and CINDERELLA protocols",
   "modes": {
     "NORMAL": {
-      "description": "Standard operations mode with read-only access",
+      "description": "Standard operations - read-only monitoring",
       "allowed_tools": [
+        "list_services",
         "get_service_status",
         "read_logs"
       ],
@@ -14,11 +15,12 @@
         "scale_fleet",
         "delete_database"
       ],
-      "rationale": "During normal operations, agents should only monitor systems to prevent accidental changes"
+      "rationale": "Monitor only - no system changes allowed"
     },
     "EMERGENCY": {
-      "description": "Emergency mode allowing corrective actions but blocking destructive operations",
+      "description": "Emergency mode - fix ONLY affected services with time limits",
       "allowed_tools": [
+        "list_services",
         "get_service_status",
         "read_logs",
         "restart_service",
@@ -27,13 +29,28 @@
       "blocked_tools": [
         "delete_database"
       ],
-      "rationale": "In emergencies, agents can take corrective actions but are strictly prevented from destructive operations that could cause data loss"
+      "service_restrictions": {
+        "enabled": true,
+        "rule": "Can only modify services in incident scope or unhealthy services"
+      },
+      "rationale": "Fix only what's broken - healthy services remain protected"
     }
   },
   "global_rules": {
     "always_blocked": [
       "delete_database"
     ],
-    "description": "Tools that are never allowed regardless of mode"
+    "service_targeting": {
+      "description": "Actions must target only affected services",
+      "enforcement": "SCALPEL protocol validates service health and incident scope"
+    },
+    "time_bounds": {
+      "description": "Emergency permissions auto-expire",
+      "enforcement": "CINDERELLA protocol manages time-bounded access"
+    },
+    "impact_simulation": {
+      "description": "High-risk actions require impact review",
+      "enforcement": "SHADOW protocol provides pre-flight impact reports"
+    }
   }
 }

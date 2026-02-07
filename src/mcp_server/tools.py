@@ -1,67 +1,67 @@
 """
 Mock Cloud Infrastructure Tools
 
-This module simulates cloud infrastructure management tools that an AI agent
-might use to manage services, databases, and fleet scaling.
+Simulates cloud infrastructure with realistic service management.
 """
 
-import random
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 
 
 class CloudInfrastructure:
-    """
-    Mock cloud infrastructure providing simulated services.
-    
-    This class simulates a cloud environment with services that can be
-    in different states (healthy, degraded, critical).
-    """
+    """Mock cloud infrastructure with service health tracking."""
     
     def __init__(self):
-        """Initialize the mock cloud infrastructure."""
         self.services = {
             "web-server": "healthy",
             "api-gateway": "healthy",
             "database": "healthy",
-            "cache": "healthy"
+            "cache": "healthy",
+            "load-balancer": "healthy"
         }
         self.fleet_size = 3
         self.execution_log = []
     
     def list_services(self) -> Dict[str, Any]:
+        """List all available services."""
         self._log_action("list_services", {})
         return {
             "services": list(self.services.keys()),
+            "count": len(self.services),
             "timestamp": datetime.now().isoformat()
-    }
-
+        }
+    
     def _log_action(self, action: str, details: Dict[str, Any]) -> None:
-        """Log all infrastructure actions for audit trail."""
+        """Log infrastructure actions."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "action": action,
             "details": details
         }
         self.execution_log.append(log_entry)
+        if len(self.execution_log) > 100:
+            self.execution_log = self.execution_log[-100:]
     
     def set_service_health(self, service: str, status: str) -> None:
-        """Manually set service health for demo scenarios."""
+        """Set service health status."""
         if service in self.services:
+            old_status = self.services[service]
             self.services[service] = status
+            self._log_action("health_change", {
+                "service": service,
+                "old_status": old_status,
+                "new_status": status
+            })
+    
+    def get_unhealthy_services(self) -> List[str]:
+        """Get list of unhealthy services."""
+        return [
+            name for name, health in self.services.items()
+            if health in ["critical", "degraded"]
+        ]
     
     def get_service_status(self, service_name: str = None) -> Dict[str, Any]:
-        """
-        Get the current status of cloud services.
-        
-        This is a READ-ONLY operation allowed in all modes.
-        
-        Args:
-            service_name: Optional specific service to check. If None, returns all services.
-        
-        Returns:
-            Dictionary containing service status information
-        """
+        """Get service health status."""
         self._log_action("get_service_status", {"service": service_name})
         
         if service_name:
@@ -72,40 +72,49 @@ class CloudInfrastructure:
                     "available_services": list(self.services.keys())
                 }
             
+            health = self.services[service_name]
+            health_emoji = {
+                "healthy": "✅",
+                "degraded": "⚠️",
+                "critical": "🔴"
+            }.get(health, "❓")
+            
             return {
                 "service": service_name,
-                "health": self.services[service_name],
+                "health": health,
+                "status_emoji": health_emoji,
+                "is_healthy": health == "healthy",
                 "timestamp": datetime.now().isoformat()
             }
         else:
+            unhealthy = self.get_unhealthy_services()
             return {
                 "services": self.services,
                 "fleet_size": self.fleet_size,
+                "unhealthy_count": len(unhealthy),
+                "unhealthy_services": unhealthy,
+                "all_healthy": len(unhealthy) == 0,
                 "timestamp": datetime.now().isoformat()
             }
     
     def read_logs(self, lines: int = 10) -> Dict[str, Any]:
-        """
-        Read system logs.
-        
-        This is a READ-ONLY operation allowed in all modes.
-        
-        Args:
-            lines: Number of recent log lines to retrieve
-        
-        Returns:
-            Dictionary containing recent log entries
-        """
+        """Read system logs."""
         self._log_action("read_logs", {"lines": lines})
         
-        # Simulate log entries
-        log_entries = [
-            f"[INFO] Web server processing request - 200 OK",
-            f"[INFO] Database connection pool: 45/100 active",
-            f"[WARN] API response time: 234ms (threshold: 200ms)",
-            f"[INFO] Cache hit rate: 87%",
-            f"[INFO] Fleet health check: All instances responding"
-        ]
+        log_entries = []
+        for service, health in self.services.items():
+            if health == "healthy":
+                log_entries.append(f"[INFO] {service}: Operating normally")
+            elif health == "degraded":
+                log_entries.append(f"[WARN] {service}: Performance degraded")
+            elif health == "critical":
+                log_entries.append(f"[ERROR] {service}: Critical issues detected!")
+        
+        log_entries.extend([
+            f"[INFO] Fleet: {self.fleet_size} instances active",
+            f"[INFO] Total services: {len(self.services)}",
+            f"[INFO] Execution log: {len(self.execution_log)} entries"
+        ])
         
         return {
             "log_lines": log_entries[:lines],
@@ -114,17 +123,7 @@ class CloudInfrastructure:
         }
     
     def restart_service(self, service_name: str) -> Dict[str, Any]:
-        """
-        Restart a cloud service.
-        
-        This is an ACTIVE operation only allowed in EMERGENCY mode.
-        
-        Args:
-            service_name: Name of the service to restart
-        
-        Returns:
-            Dictionary containing restart operation results
-        """
+        """Restart a service."""
         self._log_action("restart_service", {"service": service_name})
         
         if service_name not in self.services:
@@ -134,82 +133,45 @@ class CloudInfrastructure:
                 "available_services": list(self.services.keys())
             }
         
-        print(f"    🔄 EXECUTING: Restarting service '{service_name}'...")
-        print(f"       • Stopping service...")
-        print(f"       • Clearing cache...")
-        print(f"       • Starting service...")
-        
-        # Simulate service restart improving health
+        old_health = self.services[service_name]
         self.services[service_name] = "healthy"
         
         return {
             "status": "success",
             "service": service_name,
             "action": "restart",
+            "old_health": old_health,
             "new_health": "healthy",
-            "message": f"Service '{service_name}' successfully restarted",
+            "message": f"Service '{service_name}' restarted successfully",
             "timestamp": datetime.now().isoformat()
         }
     
     def scale_fleet(self, count: int) -> Dict[str, Any]:
-        """
-        Scale the number of service instances.
-        
-        This is an ACTIVE operation only allowed in EMERGENCY mode.
-        
-        Args:
-            count: Target number of instances
-        
-        Returns:
-            Dictionary containing scaling operation results
-        """
+        """Scale fleet size."""
         self._log_action("scale_fleet", {"target_count": count})
         
         if count < 1:
-            return {
-                "status": "error",
-                "message": "Fleet size must be at least 1"
-            }
+            return {"status": "error", "message": "Fleet size must be at least 1"}
         
         if count > 100:
-            return {
-                "status": "error",
-                "message": "Fleet size cannot exceed 100 instances"
-            }
+            return {"status": "error", "message": "Fleet size cannot exceed 100"}
         
         old_size = self.fleet_size
         self.fleet_size = count
-        
-        print(f"    📊 EXECUTING: Scaling fleet from {old_size} to {count} instances...")
-        print(f"       • Provisioning new instances...")
-        print(f"       • Updating load balancer...")
-        print(f"       • Health checking new instances...")
         
         return {
             "status": "success",
             "action": "scale",
             "old_size": old_size,
             "new_size": count,
+            "change": count - old_size,
             "message": f"Fleet scaled from {old_size} to {count} instances",
             "timestamp": datetime.now().isoformat()
         }
     
     def delete_database(self, db_name: str) -> Dict[str, Any]:
-        """
-        Delete a database.
-        
-        This is a DESTRUCTIVE operation that is ALWAYS BLOCKED by policy.
-        
-        Args:
-            db_name: Name of the database to delete
-        
-        Returns:
-            Dictionary containing deletion attempt results
-        """
-        self._log_action("delete_database", {"db_name": db_name})
-        
-        print(f"    ⚠️  CRITICAL: Attempting to delete database '{db_name}'...")
-        print(f"       ❌ THIS OPERATION SHOULD BE BLOCKED BY POLICY ENGINE")
+        """Delete database (should never execute)."""
+        self._log_action("delete_database_attempt", {"db_name": db_name})
         
         return {
             "status": "error",
@@ -219,41 +181,25 @@ class CloudInfrastructure:
         }
 
 
-# Global infrastructure instance
+# Global instance
 cloud_infra = CloudInfrastructure()
 
 
-# Tool function wrappers for agent integration
+# Tool wrappers
 def get_service_status(service_name: str = None) -> str:
-    """Get cloud service status - READ ONLY."""
-    result = cloud_infra.get_service_status(service_name)
-    return str(result)
-
-
-def read_logs(lines: int = 10) -> str:
-    """Read system logs - READ ONLY."""
-    result = cloud_infra.read_logs(lines)
-    return str(result)
-
-
-def restart_service(service_name: str) -> str:
-    """Restart a service - ACTIVE OPERATION."""
-    result = cloud_infra.restart_service(service_name)
-    return str(result)
-
-
-def scale_fleet(count: int) -> str:
-    """Scale fleet size - ACTIVE OPERATION."""
-    result = cloud_infra.scale_fleet(count)
-    return str(result)
-
-
-def delete_database(db_name: str) -> str:
-    """Delete a database - DESTRUCTIVE OPERATION (ALWAYS BLOCKED)."""
-    result = cloud_infra.delete_database(db_name)
-    return str(result)
+    return str(cloud_infra.get_service_status(service_name))
 
 def list_services() -> str:
-    result = cloud_infra.list_services()
-    return str(result)
+    return str(cloud_infra.list_services())
 
+def read_logs(lines: int = 10) -> str:
+    return str(cloud_infra.read_logs(lines))
+
+def restart_service(service_name: str) -> str:
+    return str(cloud_infra.restart_service(service_name))
+
+def scale_fleet(count: int) -> str:
+    return str(cloud_infra.scale_fleet(count))
+
+def delete_database(db_name: str) -> str:
+    return str(cloud_infra.delete_database(db_name))

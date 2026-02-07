@@ -10,7 +10,9 @@ import { Server, Activity, AlertCircle, CheckCircle, XCircle, Users } from 'luci
 import { useProxi } from '../contexts/ProxiContext';
 
 const InfrastructureMonitor = () => {
-  const { services, fleetSize, recentActions, simulateIncident, loading } = useProxi();
+  const { services, fleetSize, maxFleetSize, recentActions, simulateIncident, loading, appConfig } = useProxi();
+  const infraTitle = appConfig?.infra_card_title ?? 'Infrastructure Monitor';
+  const infraSubtitle = appConfig?.infra_card_subtitle ?? 'Real-time Service Health';
 
   const getHealthIcon = (health) => {
     switch (health) {
@@ -67,8 +69,8 @@ const InfrastructureMonitor = () => {
           <div className="flex items-center space-x-3">
             <Server className="w-8 h-8" />
             <div>
-              <h2 className="text-2xl font-bold">Infrastructure Monitor</h2>
-              <p className="text-sm opacity-90">Real-time Service Health</p>
+              <h2 className="text-2xl font-bold">{infraTitle}</h2>
+              <p className="text-sm opacity-90">{infraSubtitle}</p>
             </div>
           </div>
         </div>
@@ -140,11 +142,11 @@ const InfrastructureMonitor = () => {
           <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
             <div
               className="bg-blue-600 h-2 rounded-full transition-all"
-              style={{ width: `${(fleetSize / 10) * 100}%` }}
+              style={{ width: `${maxFleetSize ? Math.min((fleetSize / maxFleetSize) * 100, 100) : 0}%` }}
             ></div>
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            Capacity: {fleetSize}/10 instances
+            Capacity: {fleetSize}/{maxFleetSize} instances
           </div>
         </div>
       </div>

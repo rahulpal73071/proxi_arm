@@ -1,162 +1,136 @@
 """
-MCP (Model Context Protocol) Server with Chatbot Response Storage
-
-This FastAPI server includes an API to store and retrieve chatbot responses.
-Backend runs continuously, chatbot only executes when frontend sends requests.
+Unified MCP Server with Three Protocols:
+1. SCALPEL: JIT least privilege
+2. SHADOW: Impact simulation
+3. CINDERELLA: Time-bounded permissions
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 import sys
-from datetime import datetime
 from pathlib import Path
-import asyncio
-from collections import defaultdict
 
-# Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.guardrails.policy_engine import PolicyEngine, PolicyViolationError
+from src.guardrails.impact_simulator import ImpactSimulator
 from src.mcp_server.tools import (
-    cloud_infra,
-    get_service_status,
-    list_services,
-    read_logs,
-    restart_service,
-    scale_fleet,
-    delete_database
+    cloud_infra, get_service_status, list_services,
+    read_logs, restart_service, scale_fleet, delete_database
 )
 
-
-# Chatbot Conversation Storage
-class ConversationStore:
-    """Stores all chatbot conversations and responses"""
-    
-    def __init__(self):
-        self.conversations: Dict[str, List[Dict]] = defaultdict(list)
-        self.active_tasks: Dict[str, bool] = {}
-    
-    def add_message(self, session_id: str, role: str, content: str, metadata: dict = None):
-        """Add a message to the conversation"""
-        message = {
-            "id": len(self.conversations[session_id]) + 1,
-            "role": role,
-            "content": content,
-            "metadata": metadata or {},
-            "timestamp": datetime.now().isoformat()
-        }
-        self.conversations[session_id].append(message)
-        return message
-    
-    def get_conversation(self, session_id: str) -> List[Dict]:
-        """Get all messages for a session"""
-        return self.conversations[session_id]
-    
-    def clear_conversation(self, session_id: str):
-        """Clear a conversation"""
-        self.conversations[session_id] = []
-    
-    def is_task_active(self, session_id: str) -> bool:
-        """Check if a task is currently running"""
-        return self.active_tasks.get(session_id, False)
-    
-    def set_task_active(self, session_id: str, active: bool):
-        """Set task active status"""
-        self.active_tasks[session_id] = active
-
-
-# Global conversation store
-conversation_store = ConversationStore()
-
-
-# Initialize FastAPI app
+# Initialize app
 app = FastAPI(
-    title="Proxi MCP Server",
-    description="Context-Aware Cloud Guardian with Chatbot Response Storage",
-    version="2.0.0"
+    title="Proxi Unified Guardian",
+    description="AI Agent with SCALPEL, SHADOW, and CINDERELLA protocols",
+    version="3.0.0"
 )
 
-# Enable CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# Initialize Policy Engine
+# Initialize components
 policy_path = Path(__file__).parent.parent.parent / "policies" / "ops_policy.json"
 policy_engine = PolicyEngine(str(policy_path))
+impact_simulator = ImpactSimulator()
 
 
-# Request/Response Models
+# ==================== REQUEST/RESPONSE MODELS ====================
+
 class ToolRequest(BaseModel):
-    """Request model for tool execution."""
-    tool_name: str = Field(..., description="Name of the tool to execute")
-    arguments: Dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
-    context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Execution context")
-
+    tool_name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    execution_mode: str = Field(default="REAL", description="REAL or SHADOW")
 
 class ToolResponse(BaseModel):
-    """Response model for tool execution."""
     success: bool
     result: Optional[Any] = None
     error: Optional[str] = None
     policy_violation: bool = False
     blocked_reason: Optional[str] = None
-
+    shadow_report: Optional[Dict[str, Any]] = None
+    execution_flow: Optional[List[Dict[str, Any]]] = None
 
 class ModeChangeRequest(BaseModel):
-    """Request model for changing operational mode."""
-    mode: str = Field(..., description="Mode to switch to (NORMAL or EMERGENCY)")
+    mode: str
+
+class TemporaryPermissionRequest(BaseModel):
+    duration_seconds: int = Field(default=10, ge=1, le=300)
+    reason: str = Field(default="", description="Reason for emergency access")
+
+class TemporaryExtensionRequest(BaseModel):
+    additional_seconds: int = Field(default=10, ge=1, le=60)
+
+class IncidentScopeRequest(BaseModel):
+    affected_services: List[str]
+    incident_type: str
+    reason: str
+
+class IncidentSimulation(BaseModel):
+    service: str
+    status: str = Field(default="critical")
 
 
-class ChatMessage(BaseModel):
-    """Chat message from frontend"""
-    message: str = Field(..., description="User message to chatbot")
-    session_id: str = Field(default="default", description="Session ID for conversation tracking")
+# ==================== CORE ENDPOINTS ====================
 
-
-class ChatResponse(BaseModel):
-    """Chat response"""
-    success: bool
-    session_id: str
-    messages: List[Dict]
-    is_processing: bool
-
-
-# API Endpoints
 @app.get("/")
 async def root():
-    """Health check endpoint."""
+    """Health check with full system status."""
+    temp_status = policy_engine.get_temporary_status()
     return {
-        "service": "Proxi MCP Server",
+        "service": "Proxi Unified Guardian v3.0",
         "status": "operational",
+        "protocols": {
+            "scalpel": "active",
+            "shadow": "active",
+            "cinderella": "active"
+        },
         "current_mode": policy_engine.get_current_mode(),
-        "policy_engine": "active",
-        "version": "2.0.0",
-        "chatbot_status": "ready"
+        "base_mode": temp_status["base_mode"],
+        "temporary_permission_active": temp_status["is_active"],
+        "unhealthy_services": list(policy_engine.unhealthy_services),
+        "incident_scope": policy_engine.incident_scope if policy_engine.incident_scope else None
     }
 
 
 @app.get("/policy/status")
 async def get_policy_status():
-    """Get current policy configuration and status."""
+    """Get comprehensive policy status."""
+    temp_status = policy_engine.get_temporary_status()
     return {
         "current_mode": policy_engine.get_current_mode(),
+        "base_mode": temp_status["base_mode"],
         "allowed_tools": policy_engine.get_allowed_tools(),
         "blocked_tools": policy_engine.get_blocked_tools(),
+        "protocols": {
+            "cinderella": {
+                "active": temp_status["is_active"],
+                "remaining_seconds": temp_status["remaining_seconds"],
+                "expiry_time": temp_status["expiry_time"]
+            },
+            "scalpel": {
+                "unhealthy_services": list(policy_engine.unhealthy_services),
+                "incident_scope": policy_engine.incident_scope if policy_engine.incident_scope else None
+            }
+        },
         "summary": policy_engine.get_policy_summary()
     }
 
 
+# ==================== MODE MANAGEMENT ====================
+
 @app.post("/policy/set-mode")
 async def set_mode(request: ModeChangeRequest):
-    """Change the operational mode (NORMAL or EMERGENCY)."""
+    """Change operational mode."""
     try:
         policy_engine.set_mode(request.mode)
         return {
@@ -168,47 +142,287 @@ async def set_mode(request: ModeChangeRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ==================== CINDERELLA PROTOCOL ====================
+
+@app.post("/policy/grant-temporary")
+async def grant_temporary_permission(request: TemporaryPermissionRequest):
+    """CINDERELLA: Grant time-bounded emergency access."""
+    try:
+        policy_engine.grant_temporary_emergency(
+            request.duration_seconds,
+            request.reason
+        )
+        
+        return {
+            "success": True,
+            "protocol": "CINDERELLA",
+            "message": f"Temporary EMERGENCY access granted for {request.duration_seconds}s",
+            "duration_seconds": request.duration_seconds,
+            "reason": request.reason,
+            "current_mode": policy_engine.get_current_mode(),
+            "base_mode": policy_engine.base_mode,
+            "expiry_time": policy_engine.temp_permission.expiry_time.isoformat() if policy_engine.temp_permission.expiry_time else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/policy/extend-temporary")
+async def extend_temporary_permission(request: TemporaryExtensionRequest):
+    """CINDERELLA: Extend current temporary permission."""
+    try:
+        policy_engine.extend_temporary_emergency(request.additional_seconds)
+        
+        new_status = policy_engine.get_temporary_status()
+        
+        return {
+            "success": True,
+            "protocol": "CINDERELLA",
+            "message": f"Permission extended by {request.additional_seconds}s",
+            "additional_seconds": request.additional_seconds,
+            "total_remaining_seconds": new_status["remaining_seconds"],
+            "expiry_time": new_status["expiry_time"]
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/policy/revoke-temporary")
+async def revoke_temporary_permission():
+    """CINDERELLA: Revoke temporary permission."""
+    try:
+        policy_engine.revoke_temporary_emergency()
+        
+        return {
+            "success": True,
+            "protocol": "CINDERELLA",
+            "message": "Temporary permission revoked",
+            "current_mode": policy_engine.get_current_mode()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== SCALPEL PROTOCOL ====================
+
+@app.post("/policy/set-incident-scope")
+async def set_incident_scope(request: IncidentScopeRequest):
+    """SCALPEL: Define incident scope for JIT least privilege."""
+    try:
+        policy_engine.set_incident_scope(
+            request.affected_services,
+            request.incident_type,
+            request.reason
+        )
+        
+        return {
+            "success": True,
+            "protocol": "SCALPEL",
+            "message": "Incident scope locked",
+            "affected_services": request.affected_services,
+            "incident_type": request.incident_type,
+            "reason": request.reason,
+            "scope_details": policy_engine.incident_scope
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/policy/clear-incident-scope")
+async def clear_incident_scope():
+    """SCALPEL: Clear incident scope."""
+    try:
+        policy_engine.clear_incident_scope()
+        
+        return {
+            "success": True,
+            "protocol": "SCALPEL",
+            "message": "Incident scope cleared"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== TOOL EXECUTION ====================
+
 @app.post("/tools/execute", response_model=ToolResponse)
 async def execute_tool(request: ToolRequest):
-    """Execute a tool with policy enforcement."""
+    """
+    Execute tool with all three protocols:
+    - SCALPEL: Service-specific validation
+    - SHADOW: Impact simulation
+    - CINDERELLA: Time-bounded permissions
+    """
     tool_name = request.tool_name
     arguments = request.arguments
     context = request.context
+    execution_mode = request.execution_mode.upper()
     
-    print(f"\n🔧 Tool execution request: {tool_name}")
-    print(f"   Arguments: {arguments}")
-    print(f"   Current mode: {policy_engine.get_current_mode()}")
+    # Execution flow tracking
+    execution_flow = []
+    execution_flow.append({
+        "step": "request_received",
+        "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+        "tool": tool_name,
+        "arguments": arguments,
+        "mode": execution_mode
+    })
     
-    # Validate against policy
+    # Validate execution mode
+    if execution_mode not in {"REAL", "SHADOW"}:
+        raise HTTPException(status_code=400, detail="Invalid execution_mode. Use REAL or SHADOW.")
+    
+    # STEP 1: Handle status checks (updates unhealthy service tracking)
+    if tool_name == "get_service_status":
+        result = _execute_tool_function(tool_name, arguments)
+        _update_unhealthy_services(arguments.get('service_name'), result)
+        
+        execution_flow.append({
+            "step": "status_check_completed",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "unhealthy_services": list(policy_engine.unhealthy_services)
+        })
+        
+        return ToolResponse(
+            success=True,
+            result=result,
+            execution_flow=execution_flow
+        )
+    
+    # STEP 2: SHADOW MODE - Impact simulation
+    if execution_mode == "SHADOW":
+        execution_flow.append({
+            "step": "shadow_mode_simulation",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "message": "Generating impact report without execution"
+        })
+        
+        impact_report = impact_simulator.simulate(tool_name, arguments, cloud_infra)
+        
+        execution_flow.append({
+            "step": "impact_report_generated",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "risk_level": impact_report.get("risk_level"),
+            "recommendation": impact_report.get("recommendation")
+        })
+        
+        return ToolResponse(
+            success=True,
+            result={
+                "mode": "SHADOW",
+                "impact_report": impact_report,
+                "note": "No real action executed - simulation only"
+            },
+            shadow_report=impact_report,
+            execution_flow=execution_flow
+        )
+    
+    # STEP 3: Policy validation (SCALPEL + CINDERELLA)
+    execution_flow.append({
+        "step": "policy_validation_start",
+        "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+        "current_mode": policy_engine.get_current_mode(),
+        "unhealthy_services": list(policy_engine.unhealthy_services),
+        "incident_scope": policy_engine.incident_scope if policy_engine.incident_scope else None
+    })
+    
     try:
-        policy_engine.validate(tool_name, arguments, context)
+        policy_engine.validate(tool_name, arguments, context, shadow_mode=False)
+        
+        execution_flow.append({
+            "step": "policy_validation_passed",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "message": "All policy checks passed"
+        })
+        
     except PolicyViolationError as e:
-        print(f"   ❌ BLOCKED by policy: {e.reason}")
+        execution_flow.append({
+            "step": "policy_validation_failed",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "reason": e.reason,
+            "violation_type": str(type(e).__name__)
+        })
+        
         return ToolResponse(
             success=False,
             policy_violation=True,
             blocked_reason=str(e),
-            error=f"Policy violation: {e.reason}"
+            error=f"Policy violation: {e.reason}",
+            execution_flow=execution_flow
         )
     
-    # Execute the tool
+    # STEP 4: Execute tool
+    execution_flow.append({
+        "step": "tool_execution_start",
+        "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat()
+    })
+    
     try:
         result = _execute_tool_function(tool_name, arguments)
-        print(f"   ✓ Execution completed successfully")
+        
+        execution_flow.append({
+            "step": "tool_execution_completed",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "result": str(result)[:200]  # Truncate for flow
+        })
+        
+        # Update service health if restart succeeded
+        if tool_name == "restart_service" and "success" in str(result).lower():
+            service_name = arguments.get('service_name')
+            if service_name:
+                policy_engine.mark_service_healthy(service_name)
+                cloud_infra.set_service_health(service_name, "healthy")
+                
+                execution_flow.append({
+                    "step": "service_health_updated",
+                    "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+                    "service": service_name,
+                    "new_health": "healthy"
+                })
+        
         return ToolResponse(
             success=True,
-            result=result
+            result=result,
+            execution_flow=execution_flow
         )
+        
     except Exception as e:
-        print(f"   ❌ Execution error: {str(e)}")
+        execution_flow.append({
+            "step": "tool_execution_failed",
+            "timestamp": cloud_infra._log_action.__globals__['datetime'].now().isoformat(),
+            "error": str(e)
+        })
+        
         return ToolResponse(
             success=False,
-            error=f"Execution error: {str(e)}"
+            error=f"Execution error: {str(e)}",
+            execution_flow=execution_flow
         )
+
+
+def _update_unhealthy_services(service_name: Optional[str], status_result: Any) -> None:
+    """Update policy engine's unhealthy service tracking."""
+    try:
+        if service_name is None:
+            for svc_name, health in cloud_infra.services.items():
+                if health in ["critical", "degraded"]:
+                    policy_engine.register_unhealthy_service(svc_name)
+                elif health == "healthy":
+                    policy_engine.mark_service_healthy(svc_name)
+        else:
+            health = cloud_infra.services.get(service_name, "unknown")
+            if health in ["critical", "degraded"]:
+                policy_engine.register_unhealthy_service(service_name)
+            elif health == "healthy":
+                policy_engine.mark_service_healthy(service_name)
+    except Exception as e:
+        print(f"Error updating unhealthy services: {e}")
 
 
 def _execute_tool_function(tool_name: str, arguments: Dict[str, Any]) -> Any:
-    """Route tool execution to the appropriate function."""
+    """Route tool execution to appropriate function."""
     tool_map = {
         "get_service_status": get_service_status,
         "read_logs": read_logs,
@@ -230,254 +444,114 @@ def _execute_tool_function(tool_name: str, arguments: Dict[str, Any]) -> Any:
         raise ValueError(f"Invalid arguments for {tool_name}: {str(e)}")
 
 
-# ============================================================================
-# CHATBOT API - Store and Retrieve Responses
-# ============================================================================
-
-@app.post("/chat/send", response_model=ChatResponse)
-async def send_chat_message(request: ChatMessage, background_tasks: BackgroundTasks):
-    """
-    Send a message to the chatbot.
-    The chatbot processes in the background and stores the response.
-    """
-    session_id = request.session_id
-    message = request.message
-    
-    # Check if already processing
-    if conversation_store.is_task_active(session_id):
-        raise HTTPException(
-            status_code=429, 
-            detail="Chatbot is currently processing another message. Please wait."
-        )
-    
-    # Add user message to conversation
-    conversation_store.add_message(session_id, "user", message)
-    
-    # Start chatbot processing in background
-    background_tasks.add_task(process_chatbot_task, session_id, message)
-    
-    return ChatResponse(
-        success=True,
-        session_id=session_id,
-        messages=conversation_store.get_conversation(session_id),
-        is_processing=True
-    )
-
-
-@app.get("/chat/messages/{session_id}", response_model=ChatResponse)
-async def get_chat_messages(session_id: str):
-    """
-    Get all messages for a conversation session.
-    Frontend calls this to retrieve chatbot responses.
-    """
-    return ChatResponse(
-        success=True,
-        session_id=session_id,
-        messages=conversation_store.get_conversation(session_id),
-        is_processing=conversation_store.is_task_active(session_id)
-    )
-
-
-@app.delete("/chat/messages/{session_id}")
-async def clear_chat_messages(session_id: str):
-    """Clear all messages for a session."""
-    conversation_store.clear_conversation(session_id)
-    return {
-        "success": True,
-        "session_id": session_id,
-        "message": "Conversation cleared"
-    }
-
-
-@app.get("/chat/status/{session_id}")
-async def get_chat_status(session_id: str):
-    """Check if chatbot is currently processing."""
-    return {
-        "session_id": session_id,
-        "is_processing": conversation_store.is_task_active(session_id),
-        "message_count": len(conversation_store.get_conversation(session_id))
-    }
-
-
-async def process_chatbot_task(session_id: str, user_message: str):
-    """
-    Process chatbot task in background.
-    This is where the actual AI agent work happens.
-    """
-    from src.agent.bot import ProxiAgent
-    
-    try:
-        # Mark task as active
-        conversation_store.set_task_active(session_id, True)
-        
-        # Add "thinking" message
-        conversation_store.add_message(
-            session_id, 
-            "system", 
-            "Agent is processing your request...",
-            {"thinking": True}
-        )
-        
-        # Simulate some processing time
-        await asyncio.sleep(1)
-        
-        # Initialize and run agent
-        agent = ProxiAgent(use_mock=True)
-        result = agent.run(user_message)
-        
-        # Remove thinking message
-        messages = conversation_store.get_conversation(session_id)
-        conversation_store.conversations[session_id] = [
-            msg for msg in messages if not msg.get("metadata", {}).get("thinking")
-        ]
-        
-        # Add agent response
-        conversation_store.add_message(
-            session_id,
-            "agent",
-            result.get("response", "Task completed."),
-            {
-                "success": result.get("success", True),
-                "tool_used": result.get("tool_used"),
-                "blocked": result.get("blocked", False)
-            }
-        )
-        
-    except Exception as e:
-        print(f"Error in chatbot task: {e}")
-        # Remove thinking message
-        messages = conversation_store.get_conversation(session_id)
-        conversation_store.conversations[session_id] = [
-            msg for msg in messages if not msg.get("metadata", {}).get("thinking")
-        ]
-        
-        # Add error message
-        conversation_store.add_message(
-            session_id,
-            "agent",
-            f"Error processing request: {str(e)}",
-            {"error": True}
-        )
-    finally:
-        # Mark task as complete
-        conversation_store.set_task_active(session_id, False)
-
-
-# ============================================================================
-# Infrastructure Endpoints
-# ============================================================================
+# ==================== INFRASTRUCTURE MANAGEMENT ====================
 
 @app.get("/infrastructure/status")
 async def get_infrastructure_status():
-    """Get current infrastructure status."""
+    """Get infrastructure status."""
     return {
         "services": cloud_infra.services,
         "fleet_size": cloud_infra.fleet_size,
-        "recent_actions": cloud_infra.execution_log[-10:]
+        "recent_actions": cloud_infra.execution_log[-10:],
+        "policy_unhealthy_services": list(policy_engine.unhealthy_services)
     }
 
 
 @app.post("/infrastructure/simulate-incident")
-async def simulate_incident(service: str, status: str = "critical"):
-    """Simulate a service incident for demo purposes."""
+async def simulate_incident(request: IncidentSimulation):
+    """Simulate service incident."""
+    service = request.service
+    status = request.status
+    
     cloud_infra.set_service_health(service, status)
+    
+    if status in ["critical", "degraded"]:
+        policy_engine.register_unhealthy_service(service)
+    else:
+        policy_engine.mark_service_healthy(service)
+    
     return {
         "success": True,
-        "message": f"Simulated incident: {service} set to {status}"
+        "message": f"Simulated: {service} set to {status}",
+        "infrastructure_status": cloud_infra.services[service],
+        "policy_tracking": service in policy_engine.unhealthy_services
+    }
+
+
+# ==================== HISTORY & TRACEABILITY ====================
+
+@app.get("/execution/history")
+async def get_execution_history(limit: int = 50):
+    """Get execution history for traceability."""
+    return {
+        "history": policy_engine.get_execution_history(limit),
+        "total_events": len(policy_engine.execution_history),
+        "protocols_active": {
+            "scalpel": bool(policy_engine.unhealthy_services or policy_engine.incident_scope),
+            "cinderella": policy_engine.temp_permission.is_valid(),
+            "shadow": True
+        }
     }
 
 
 @app.get("/tools/catalog")
 async def get_tool_catalog():
-    """Get catalog of available tools with descriptions."""
+    """Get tool catalog with descriptions."""
     return {
         "tools": [
             {
                 "name": "list_services",
-                "description": "List all available cloud services",
-                "parameters": {},
-                "category": "read-only"
+                "description": "List all cloud services",
+                "category": "read-only",
+                "parameters": {}
             },
             {
                 "name": "get_service_status",
-                "description": "Get the current health status of cloud services",
-                "parameters": {
-                    "service_name": {
-                        "type": "string",
-                        "description": "Specific service to check (optional)",
-                        "required": False
-                    }
-                },
-                "category": "read-only"
+                "description": "Get service health status",
+                "category": "read-only",
+                "parameters": {"service_name": "optional"}
             },
             {
                 "name": "read_logs",
-                "description": "Read recent system logs",
-                "parameters": {
-                    "lines": {
-                        "type": "integer",
-                        "description": "Number of log lines to retrieve",
-                        "default": 10
-                    }
-                },
-                "category": "read-only"
+                "description": "Read system logs",
+                "category": "read-only",
+                "parameters": {"lines": "integer, default 10"}
             },
             {
                 "name": "restart_service",
-                "description": "Restart a cloud service (EMERGENCY mode only)",
-                "parameters": {
-                    "service_name": {
-                        "type": "string",
-                        "description": "Name of the service to restart",
-                        "required": True
-                    }
-                },
-                "category": "active"
+                "description": "Restart service (EMERGENCY only, unhealthy services only)",
+                "category": "active",
+                "parameters": {"service_name": "required"},
+                "restrictions": "SCALPEL: Only unhealthy services"
             },
             {
                 "name": "scale_fleet",
-                "description": "Scale the number of service instances (EMERGENCY mode only)",
-                "parameters": {
-                    "count": {
-                        "type": "integer",
-                        "description": "Target number of instances",
-                        "required": True
-                    }
-                },
-                "category": "active"
+                "description": "Scale fleet size (EMERGENCY only)",
+                "category": "active",
+                "parameters": {"count": "integer"}
             },
             {
                 "name": "delete_database",
-                "description": "Delete a database (ALWAYS BLOCKED)",
-                "parameters": {
-                    "db_name": {
-                        "type": "string",
-                        "description": "Name of the database",
-                        "required": True
-                    }
-                },
-                "category": "destructive"
+                "description": "Delete database (ALWAYS BLOCKED)",
+                "category": "destructive",
+                "parameters": {"db_name": "required"}
             }
         ],
         "current_mode": policy_engine.get_current_mode(),
-        "allowed_in_current_mode": policy_engine.get_allowed_tools()
+        "allowed_in_current_mode": policy_engine.get_allowed_tools(),
+        "unhealthy_services": list(policy_engine.unhealthy_services)
     }
 
 
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*70)
-    print("  PROXI MCP SERVER - Context-Aware Cloud Guardian")
-    print("  Version 2.0.0 with Chatbot Response Storage")
+    print("  PROXI UNIFIED GUARDIAN v3.0")
+    print("  Protocols: SCALPEL | SHADOW | CINDERELLA")
     print("="*70)
     print(policy_engine.get_policy_summary())
-    print("\nChatbot API Endpoints:")
-    print("  POST   /chat/send              - Send message to chatbot")
-    print("  GET    /chat/messages/{id}     - Get conversation messages")
-    print("  DELETE /chat/messages/{id}     - Clear conversation")
-    print("  GET    /chat/status/{id}       - Check processing status")
-    print("\nStarting server on http://localhost:8000")
-    print("API docs available at http://localhost:8000/docs")
+    print("\nServer: http://localhost:8000")
+    print("API Docs: http://localhost:8000/docs")
     print("="*70 + "\n")
     
     uvicorn.run(app, host="0.0.0.0", port=8000)

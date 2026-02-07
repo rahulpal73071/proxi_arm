@@ -5,7 +5,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { policyAPI, infrastructureAPI, toolsAPI, chatAPI } from '../services/api';
+import { policyAPI, infrastructureAPI, toolsAPI, chatAPI, healthAPI } from '../services/api';
 
 const ProxiContext = createContext(null);
 
@@ -23,6 +23,11 @@ export const ProxiProvider = ({ children }) => {
 
   // Tools State
   const [toolCatalog, setToolCatalog] = useState([]);
+  const [quickActions, setQuickActions] = useState([]);
+
+  // App config from backend (no hardcoding)
+  const [appConfig, setAppConfig] = useState(null);
+  const [maxFleetSize, setMaxFleetSize] = useState(10);
 
   // Agent State
   const [agentMessages, setAgentMessages] = useState([]);
@@ -60,6 +65,7 @@ export const ProxiProvider = ({ children }) => {
       const data = await infrastructureAPI.getStatus();
       setServices(data.services || {});
       setFleetSize(data.fleet_size || 0);
+      setMaxFleetSize(data.max_fleet_size ?? 10);
       setRecentActions(data.recent_actions || []);
     } catch (err) {
       console.error('Failed to load infrastructure status:', err);
@@ -67,12 +73,13 @@ export const ProxiProvider = ({ children }) => {
   }, []);
 
   /**
-   * Load tool catalog
+   * Load tool catalog and quick actions from backend
    */
   const loadToolCatalog = useCallback(async () => {
     try {
       const data = await toolsAPI.getCatalog();
       setToolCatalog(data.tools || []);
+      setQuickActions(data.quick_actions || []);
     } catch (err) {
       console.error('Failed to load tool catalog:', err);
     }
@@ -85,7 +92,7 @@ export const ProxiProvider = ({ children }) => {
     try {
       const data = await chatAPI.getMessages(sessionId);
       
-      // Convert backend format to frontend format
+      // Convert backend format to frontend format (include steps for flow display)
       const formattedMessages = data.messages.map(msg => ({
         role: msg.role,
         content: msg.content,
@@ -93,6 +100,7 @@ export const ProxiProvider = ({ children }) => {
         toolUsed: msg.metadata?.tool_used,
         blocked: msg.metadata?.blocked || false,
         error: msg.metadata?.error || false,
+        steps: msg.metadata?.steps || [],
       }));
       
       setAgentMessages(formattedMessages);
@@ -137,14 +145,46 @@ export const ProxiProvider = ({ children }) => {
   }, []);
 
   /**
-   * Initialize app - load all data
+   * Load app config from backend (title, tagline, features)
+   */
+  const loadAppConfig = useCallback(async () => {
+    try {
+      const data = await healthAPI.check();
+      setAppConfig({
+        app_name: data.app_name,
+        tagline: data.tagline,
+        footer_title: data.footer_title,
+        footer_line: data.footer_line,
+        features: data.features || [],
+        policy_card_title: data.policy_card_title,
+        policy_card_subtitle: data.policy_card_subtitle,
+        infra_card_title: data.infra_card_title,
+        infra_card_subtitle: data.infra_card_subtitle,
+        tools_card_title: data.tools_card_title,
+        tools_card_subtitle: data.tools_card_subtitle,
+        chat_card_title: data.chat_card_title,
+        chat_card_subtitle: data.chat_card_subtitle,
+        chat_empty_title: data.chat_empty_title,
+        chat_empty_subtitle: data.chat_empty_subtitle,
+        chat_thinking: data.chat_thinking,
+        chat_placeholder: data.chat_placeholder,
+        chat_tip: data.chat_tip,
+        tools_card_tip: data.tools_card_tip,
+      });
+    } catch (err) {
+      console.error('Failed to load app config:', err);
+    }
+  }, []);
+
+  /**
+   * Initialize app - load all data from backend
    */
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
-    
     try {
       await Promise.all([
+        loadAppConfig(),
         loadPolicyStatus(),
         loadInfrastructureStatus(),
         loadToolCatalog(),
@@ -155,7 +195,7 @@ export const ProxiProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [loadPolicyStatus, loadInfrastructureStatus, loadToolCatalog, loadChatMessages]);
+  }, [loadAppConfig, loadPolicyStatus, loadInfrastructureStatus, loadToolCatalog, loadChatMessages]);
 
   /**
    * Change operational mode
@@ -257,34 +297,33 @@ export const ProxiProvider = ({ children }) => {
   }, [loadInfrastructureStatus]);
 
   const value = {
+    // App config (from backend)
+    appConfig,
     // Policy
     policyStatus,
     currentMode,
     allowedTools,
     blockedTools,
     changeMode,
-
     // Infrastructure
     services,
     fleetSize,
+    maxFleetSize,
     recentActions,
     simulateIncident,
-
     // Tools
     toolCatalog,
+    quickActions,
     executeTool,
-
     // Agent
     agentMessages,
     isAgentThinking,
     sendAgentMessage,
     clearAgentMessages,
-
     // Actions
     refresh: initialize,
     loadPolicyStatus,
     loadInfrastructureStatus,
-
     // State
     loading,
     error,

@@ -10,12 +10,9 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import httpx
-from langchain_classic.agents import AgentExecutor
-from langchain_classic.agents import create_tool_calling_agent
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.tools import Tool
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage, SystemMessage
-
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -28,55 +25,47 @@ class ProxiAgent:
     infrastructure issues while respecting security policies.
     """
     
-    def __init__(self, mcp_server_url: str = "http://localhost:8000", use_mock: bool = True):
+    def __init__(self, mcp_server_url: str = "http://localhost:8000"):
         """
-        Initialize the Proxi Agent.
-        
-        Args:
-            mcp_server_url: URL of the MCP server
-            use_mock: If True, use mock LLM for demo without API keys
+        Initialize the Proxi Agent. LLM is configured via .env only.
+        Requires one of: GOOGLE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY.
         """
         self.mcp_server_url = mcp_server_url
-        self.use_mock = use_mock
         self.client = httpx.Client(timeout=30.0)
-        
-        # Initialize LangChain components
         self.tools = self._create_tools()
         self.llm = self._create_llm()
         self.agent_executor = self._create_agent()
-        
+
     def _create_llm(self):
-        """Create the LLM (with mock fallback for demo without API keys)."""
-        if self.use_mock:
-            # Use a mock LLM for demo purposes
-            return MockLLM()
-        else:
-            # Try to use real LLM if API key is available
-            try:
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                if os.getenv("GOOGLE_API_KEY"):
-                    return ChatGoogleGenerativeAI(
-                        model="gemini-2.5-flash-lite",
-                        temperature=0
-                    )
-            except:
-                pass
-            try:
-                from langchain_openai import ChatOpenAI
-                if os.getenv("OPENAI_API_KEY"):
-                    return ChatOpenAI(model="gpt-4", temperature=0)
-            except:
-                pass
-            
-            try:
-                from langchain_anthropic import ChatAnthropic
-                if os.getenv("ANTHROPIC_API_KEY"):
-                    return ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0)
-            except:
-                pass
-            
-            print("⚠️  No API keys found, using mock LLM")
-            return MockLLM()
+        """Create the LLM from .env. Requires at least one API key in .env."""
+        # Gemini (Google) - prefer GOOGLE_API_KEY or GEMINI_API_KEY
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if api_key:
+                return ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    temperature=0,
+                    api_key=api_key
+                )
+        except Exception:
+            pass
+        try:
+            from langchain_openai import ChatOpenAI
+            if os.getenv("OPENAI_API_KEY"):
+                return ChatOpenAI(model="gpt-4", temperature=0)
+        except Exception:
+            pass
+        try:
+            from langchain_anthropic import ChatAnthropic
+            if os.getenv("ANTHROPIC_API_KEY"):
+                return ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0)
+        except Exception:
+            pass
+        raise RuntimeError(
+            "No LLM API key found. Set one of these in .env: "
+            "GOOGLE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY"
+        )
     
     def _execute_mcp_tool(self, tool_name: str, **kwargs) -> str:
         """
@@ -179,19 +168,51 @@ RESPONSE STYLE:
 
 Remember: Safety and policy compliance come before speed of resolution."""
 
-        if self.use_mock:
-            # For mock demo, we'll use a simplified executor
-            return MockAgentExecutor(self.tools, system_prompt)
-        else:
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", "{input}"),
-                ("placeholder", "{agent_scratchpad}")
-            ])
-            
-            agent = create_tool_calling_agent(self.llm, self.tools, prompt)
-            return AgentExecutor(agent=agent, tools=self.tools, verbose=True)
-    
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}")
+        ])
+        agent = create_tool_calling_agent(self.llm, self.tools, prompt)
+        return AgentExecutor(
+            agent=agent,
+            tools=self.tools,
+            verbose=True,
+            return_intermediate_steps=True
+        )
+
+    def _normalize_steps(self, raw_steps: Any) -> List[Dict[str, Any]]:
+        """Convert LangChain intermediate_steps to a uniform format for the frontend."""
+        steps = []
+        if not raw_steps:
+            return steps
+        for i, item in enumerate(raw_steps):
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                action, observation = item[0], item[1]
+                tool_name = getattr(action, "tool", None) or (action.get("tool") if isinstance(action, dict) else "?")
+                tool_input = getattr(action, "tool_input", None) or (action.get("tool_input") if isinstance(action, dict) else {})
+                log = getattr(action, "log", None) or (action.get("log") if isinstance(action, dict) else "")
+                steps.append({
+                    "step_number": i + 1,
+                    "thought": log or f"Use tool: {tool_name}",
+                    "action": tool_name,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "result": str(observation)[:500],
+                    "blocked": "POLICY BLOCKED" in str(observation),
+                })
+            elif isinstance(item, dict):
+                steps.append({
+                    "step_number": item.get("step_number", i + 1),
+                    "thought": item.get("thought", ""),
+                    "action": item.get("action", item.get("tool_name", "")),
+                    "tool_name": item.get("tool_name", item.get("action", "")),
+                    "tool_input": item.get("tool_input", {}),
+                    "result": item.get("result", ""),
+                    "blocked": item.get("blocked", False),
+                })
+        return steps
+
     def run(self, task: str) -> Dict[str, Any]:
         """
         Execute a task through the agent.
@@ -200,7 +221,7 @@ Remember: Safety and policy compliance come before speed of resolution."""
             task: The task description or question
         
         Returns:
-            Dictionary containing the agent's response and metadata
+            Dictionary with response, steps (for frontend flow), success, task, error.
         """
         print(f"\n{'='*70}")
         print(f"📋 AGENT TASK: {task}")
@@ -208,16 +229,22 @@ Remember: Safety and policy compliance come before speed of resolution."""
         
         try:
             result = self.agent_executor.invoke({"input": task})
+            output = result.get("output", str(result))
+            raw_steps = result.get("intermediate_steps", [])
+            steps = self._normalize_steps(raw_steps)
             return {
                 "success": True,
                 "task": task,
-                "response": result.get("output", str(result))
+                "response": output,
+                "steps": steps,
             }
         except Exception as e:
             return {
                 "success": False,
                 "task": task,
-                "error": str(e)
+                "error": str(e),
+                "response": str(e),
+                "steps": [],
             }
     
     def get_current_mode(self) -> str:
@@ -227,155 +254,3 @@ Remember: Safety and policy compliance come before speed of resolution."""
             return response.json().get("current_mode", "UNKNOWN")
         except:
             return "UNKNOWN"
-
-
-class MockLLM:
-    """
-    Mock LLM for demo purposes when no API key is available.
-    
-    This provides realistic agent behavior without requiring actual LLM API calls.
-    """
-    
-    def __init__(self):
-        self.call_count = 0
-    
-    def invoke(self, messages):
-        """Simulate LLM reasoning based on the task."""
-        self.call_count += 1
-        
-        # Extract the user's task
-        user_message = ""
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                user_message = msg.content.lower()
-                break
-        
-        # Simulate intelligent responses based on task
-        if "status" in user_message or "check" in user_message:
-            return MockMessage("I'll check the service status first to diagnose the issue.")
-        elif "restart" in user_message:
-            return MockMessage("I need to restart the service to resolve this critical issue.")
-        elif "delete" in user_message:
-            return MockMessage("I should try to delete the database to free up space.")
-        elif "scale" in user_message:
-            return MockMessage("I'll scale up the fleet to handle the increased load.")
-        else:
-            return MockMessage("Let me investigate the infrastructure status first.")
-
-
-class MockMessage:
-    """Mock message for LLM responses."""
-    def __init__(self, content):
-        self.content = content
-
-
-class MockAgentExecutor:
-    """
-    Mock Agent Executor for demo without real LLM.
-    
-    This simulates the agent's decision-making process for demonstration.
-    """
-    
-    def __init__(self, tools: List[Tool], system_prompt: str):
-        self.tools = {tool.name: tool for tool in tools}
-        self.system_prompt = system_prompt
-    
-    def invoke(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Simulate agent execution with realistic decision flow.
-        
-        This mock follows the agent's logical reasoning pattern:
-        1. Analyze the task
-        2. Choose appropriate tools
-        3. Execute tools and handle policy blocks
-        4. Provide final response
-        """
-        task = inputs.get("input", "")
-        task_lower = task.lower()
-        
-        print("🤖 Agent reasoning process:")
-        print(f"   Task analysis: {task}")
-        
-        # Determine which tools to try based on task
-        if "restart" in task_lower:
-            print("   → Thought: The task requires restarting a service")
-            print("   → Action: Attempting to use restart_service tool")
-            
-            result = self.tools["restart_service"].func("web-server")
-            print(f"   → Observation: {result}")
-            
-            if "POLICY BLOCKED" in result:
-                output = (
-                    f"I attempted to restart the web-server, but the operation was blocked by policy.\n\n"
-                    f"{result}\n\n"
-                    f"This is because we are in a restricted operational mode that only allows read-only operations. "
-                    f"In NORMAL mode, I can only monitor systems using get_service_status and read_logs. "
-                    f"To restart services, the system would need to be in EMERGENCY mode.\n\n"
-                    f"Would you like me to check the current service status instead?"
-                )
-            else:
-                output = f"Successfully restarted the web-server. {result}"
-        
-        elif "delete" in task_lower and "database" in task_lower:
-            print("   → Thought: The task involves deleting a database")
-            print("   → Action: Attempting to use delete_database tool")
-            
-            result = self.tools["delete_database"].func("production-db")
-            print(f"   → Observation: {result}")
-            
-            output = (
-                f"I attempted to delete the database, but this operation is strictly forbidden.\n\n"
-                f"{result}\n\n"
-                f"Database deletion is a destructive operation that is ALWAYS BLOCKED by policy, "
-                f"regardless of operational mode. This is a critical safety measure to prevent data loss.\n\n"
-                f"Instead, I recommend:\n"
-                f"1. Check database size and usage with read_logs\n"
-                f"2. Archive old data rather than deleting\n"
-                f"3. Scale up storage capacity if needed\n"
-                f"4. Contact a database administrator for manual intervention if absolutely necessary"
-            )
-        
-        elif "fix" in task_lower or "critical" in task_lower:
-            print("   → Thought: This is a critical issue requiring corrective action")
-            print("   → Action: First checking service status")
-            
-            status_result = self.tools["get_service_status"].func("web-server")
-            print(f"   → Observation: {status_result}")
-            
-            print("   → Thought: Now attempting to restart the service")
-            restart_result = self.tools["restart_service"].func("web-server")
-            print(f"   → Observation: {restart_result}")
-            
-            if "Success" in restart_result:
-                output = (
-                    f"I successfully resolved the critical issue:\n\n"
-                    f"1. Checked service status: {status_result}\n"
-                    f"2. Restarted the web-server: {restart_result}\n\n"
-                    f"The service should now be operational. The system is in EMERGENCY mode, "
-                    f"which allowed me to perform corrective actions."
-                )
-            else:
-                output = (
-                    f"I attempted to fix the critical issue but was blocked by policy:\n\n"
-                    f"{restart_result}\n\n"
-                    f"The current operational mode prevents me from restarting services. "
-                    f"I can monitor the situation and provide diagnostics, but corrective actions "
-                    f"require EMERGENCY mode to be enabled."
-                )
-        
-        else:
-            print("   → Thought: Gathering information about system status")
-            print("   → Action: Checking service status")
-            
-            result = self.tools["get_service_status"].func()
-            print(f"   → Observation: {result}")
-            
-            output = (
-                f"I've checked the current infrastructure status:\n\n"
-                f"{result}\n\n"
-                f"All services appear to be operational. Is there a specific issue you'd like me to investigate?"
-            )
-        
-        print(f"\n💬 Agent response:\n{output}\n")
-        
-        return {"output": output}

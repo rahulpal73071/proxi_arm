@@ -10,7 +10,10 @@ import { Terminal, Play, CheckCircle, XCircle, AlertTriangle } from 'lucide-reac
 import { useProxi } from '../contexts/ProxiContext';
 
 const ToolExecutor = () => {
-  const { toolCatalog, executeTool, allowedTools, currentMode } = useProxi();
+  const { toolCatalog, executeTool, allowedTools, currentMode, appConfig } = useProxi();
+  const toolsTitle = appConfig?.tools_card_title ?? 'Tool Executor';
+  const toolsSubtitle = appConfig?.tools_card_subtitle ?? 'Test Policy Enforcement';
+  const toolsTip = appConfig?.tools_card_tip ?? 'Try executing blocked tools to see policy in action';
   
   const [selectedTool, setSelectedTool] = useState('');
   const [toolArgs, setToolArgs] = useState({});
@@ -72,8 +75,8 @@ const ToolExecutor = () => {
         <div className="flex items-center space-x-3">
           <Terminal className="w-8 h-8" />
           <div>
-            <h2 className="text-2xl font-bold">Tool Executor</h2>
-            <p className="text-sm opacity-90">Test Policy Enforcement</p>
+            <h2 className="text-2xl font-bold">{toolsTitle}</h2>
+            <p className="text-sm opacity-90">{toolsSubtitle}</p>
           </div>
         </div>
       </div>
@@ -230,11 +233,8 @@ const ToolExecutor = () => {
         </div>
       )}
 
-      {/* Info Footer */}
       <div className="px-6 py-4 bg-gray-50">
-        <p className="text-xs text-gray-600 text-center">
-          💡 Try executing blocked tools to see the Policy Engine in action
-        </p>
+        <p className="text-xs text-gray-600 text-center">💡 {toolsTip}</p>
       </div>
     </div>
   );

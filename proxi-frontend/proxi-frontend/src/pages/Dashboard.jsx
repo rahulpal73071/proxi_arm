@@ -13,11 +13,16 @@ import ToolExecutor from '../components/ToolExecutor';
 import AgentChat from '../components/AgentChat';
 
 const Dashboard = () => {
-  const { refresh, loading, error, currentMode } = useProxi();
+  const { refresh, loading, error, currentMode, appConfig } = useProxi();
+  const appName = appConfig?.app_name ?? 'Proxi Dashboard';
+  const tagline = appConfig?.tagline ?? 'Context-Aware Cloud Guardian';
+  const features = appConfig?.features ?? [];
+  const footerTitle = appConfig?.footer_title ?? 'Proxi: The Context-Aware Cloud Guardian';
+  const footerLine = appConfig?.footer_line ?? 'Built for ArmorIQ Hackathon';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      {/* Header */}
+      {/* Header from backend config */}
       <header className="bg-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
@@ -26,12 +31,8 @@ const Dashboard = () => {
                 <Activity className="w-7 h-7 text-white" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">
-                  Proxi Dashboard
-                </h1>
-                <p className="text-sm text-gray-600">
-                  Context-Aware Cloud Guardian
-                </p>
+                <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
+                <p className="text-sm text-gray-600">{tagline}</p>
               </div>
             </div>
             
@@ -92,41 +93,25 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Info Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="font-semibold text-gray-700 mb-2">🛡️ Policy Enforcement</h3>
-            <p className="text-sm text-gray-600">
-              Every action is validated against security policies before execution.
-            </p>
+        {/* Info Cards from backend */}
+        {features.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+            {features.map((feature, idx) => (
+              <div key={idx} className="bg-white rounded-lg shadow p-6">
+                <h3 className="font-semibold text-gray-700 mb-2">{feature.title}</h3>
+                <p className="text-sm text-gray-600">{feature.description}</p>
+              </div>
+            ))}
           </div>
-          
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="font-semibold text-gray-700 mb-2">🎯 Context Awareness</h3>
-            <p className="text-sm text-gray-600">
-              Permissions adapt based on operational mode (NORMAL vs EMERGENCY).
-            </p>
-          </div>
-          
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="font-semibold text-gray-700 mb-2">🔒 Defense in Depth</h3>
-            <p className="text-sm text-gray-600">
-              Critical operations are always blocked regardless of mode.
-            </p>
-          </div>
-        </div>
+        )}
       </main>
 
-      {/* Footer */}
+      {/* Footer from backend config */}
       <footer className="mt-12 pb-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="border-t border-gray-200 pt-8 text-center text-sm text-gray-600">
-            <p className="mb-2">
-              <strong>Proxi: The Context-Aware Cloud Guardian</strong>
-            </p>
-            <p>
-              Built for ArmorIQ Hackathon • Because even AI agents need guardrails 🛡️
-            </p>
+            <p className="mb-2"><strong>{footerTitle}</strong></p>
+            <p>{footerLine}</p>
           </div>
         </div>
       </footer>

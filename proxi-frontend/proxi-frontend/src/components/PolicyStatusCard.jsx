@@ -9,14 +9,22 @@ import { Shield, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import { useProxi } from '../contexts/ProxiContext';
 
 const PolicyStatusCard = () => {
-  const { currentMode, allowedTools, blockedTools, changeMode, loading } = useProxi();
+  const { policyStatus, currentMode, allowedTools, blockedTools, changeMode, loading, appConfig } = useProxi();
+  const modes = policyStatus?.modes || {};
+  const policyTitle = appConfig?.policy_card_title ?? 'Policy Engine';
+  const policySubtitle = appConfig?.policy_card_subtitle ?? 'Context-Aware Security';
+  const modeNames = Object.keys(modes);
+  const currentModeInfo = modes[currentMode] || {};
+  const globalRules = policyStatus?.global_rules || {};
+  const alwaysBlocked = globalRules.always_blocked || [];
 
   const isNormalMode = currentMode === 'NORMAL';
   const isEmergencyMode = currentMode === 'EMERGENCY';
 
   const handleModeToggle = async () => {
-    const newMode = isNormalMode ? 'EMERGENCY' : 'NORMAL';
-    await changeMode(newMode);
+    const nextIndex = (modeNames.indexOf(currentMode) + 1) % Math.max(modeNames.length, 1);
+    const newMode = modeNames[nextIndex] || modeNames[0];
+    if (newMode) await changeMode(newMode);
   };
 
   if (loading) {
@@ -36,8 +44,8 @@ const PolicyStatusCard = () => {
           <div className="flex items-center space-x-3">
             <Shield className="w-8 h-8" />
             <div>
-              <h2 className="text-2xl font-bold">Policy Engine</h2>
-              <p className="text-sm opacity-90">Context-Aware Security</p>
+              <h2 className="text-2xl font-bold">{policyTitle}</h2>
+              <p className="text-sm opacity-90">{policySubtitle}</p>
             </div>
           </div>
           
@@ -51,37 +59,33 @@ const PolicyStatusCard = () => {
 
       {/* Body */}
       <div className="p-6">
-        {/* Mode Description */}
+        {/* Mode Description from backend */}
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          {isNormalMode ? (
-            <p className="text-gray-700">
-              <strong>Standard Operations Mode:</strong> Read-only access enabled. 
-              Agents can monitor systems but cannot make changes to prevent accidental modifications.
-            </p>
-          ) : (
-            <p className="text-gray-700">
-              <strong>Emergency Response Mode:</strong> Corrective actions enabled. 
-              Agents can take active measures to restore system health, but destructive operations remain blocked.
-            </p>
-          )}
-        </div>
-
-        {/* Mode Toggle Button */}
-        <div className="mb-6">
-          <button
-            onClick={handleModeToggle}
-            className={`w-full py-3 px-6 rounded-lg font-semibold transition-all ${
-              isNormalMode
-                ? 'bg-orange-500 hover:bg-orange-600 text-white'
-                : 'bg-blue-500 hover:bg-blue-600 text-white'
-            }`}
-          >
-            {isNormalMode ? '🚨 Switch to EMERGENCY Mode' : '✅ Switch to NORMAL Mode'}
-          </button>
-          <p className="text-xs text-gray-500 text-center mt-2">
-            Click to change operational context
+          <p className="text-gray-700">
+            {currentModeInfo.description ? (
+              <><strong>{currentMode}:</strong> {currentModeInfo.description}</>
+            ) : (
+              <><strong>{currentMode}</strong> mode active.</>
+            )}
           </p>
         </div>
+
+        {/* Mode Toggle: cycle through backend modes */}
+        {modeNames.length > 1 && (
+          <div className="mb-6">
+            <button
+              onClick={handleModeToggle}
+              className={`w-full py-3 px-6 rounded-lg font-semibold flex items-center justify-center space-x-2 transition-all ${
+                isNormalMode ? 'bg-orange-500 hover:bg-orange-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'
+              }`}
+            >
+              Switch to {modeNames[(modeNames.indexOf(currentMode) + 1) % modeNames.length] || modeNames[0]} Mode
+            </button>
+            <p className="text-xs text-gray-500 text-center mt-2">
+              Click to change operational context
+            </p>
+          </div>
+        )}
 
         {/* Allowed Tools */}
         <div className="mb-4">
@@ -116,7 +120,7 @@ const PolicyStatusCard = () => {
               >
                 <XCircle className="w-4 h-4 text-red-600 mr-2" />
                 <span className="text-sm font-mono text-red-800">{tool}</span>
-                {tool === 'delete_database' && (
+                {alwaysBlocked.includes(tool) && (
                   <span className="ml-auto text-xs bg-red-600 text-white px-2 py-1 rounded">
                     ALWAYS BLOCKED
                   </span>

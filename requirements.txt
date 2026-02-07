@@ -3,21 +3,6 @@ fastapi==0.104.1
 uvicorn==0.24.0
 pydantic>=2.5.0
 
-# LangChain ecosystem (modern, compatible)
-langchain>=0.1.20
-langchain-community>=0.0.30
-langchain-core>=0.1.40
-
-# Providers
-langchain-openai>=0.0.5
-langchain-anthropic>=0.1.1
-langchain-google-genai>=2.0.0
-
-# SDKs (DO NOT over-pin)
-openai>=1.6.1
-anthropic>=0.17.0
-
 # Utils
 python-dotenv==1.0.0
 httpx==0.25.2
-dotenv
